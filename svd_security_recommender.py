@@ -6,9 +6,9 @@ from sklearn.decomposition import TruncatedSVD
 class SVDSecurityRecommender:
     """
     Système de recommandation de mesures de sécurité basé sur SVD.
-    - Les 'users' = machines / hôtes
-    - Les 'items' = actions de sécurité possibles
-    - La matrice = efficacité (ou pertinence) de chaque action pour chaque machine
+    - 'machine_id' : identifiant de la machine / serveur
+    - 'action_id'  : identifiant de l'action de sécurité
+    - 'score'      : efficacité / pertinence de l'action (ex : 1 à 5)
     """
 
     def __init__(self, n_components: int = 20):
@@ -22,13 +22,13 @@ class SVDSecurityRecommender:
         self.machine_ids = None
         self.action_ids = None
 
-        # Mapping pour mieux afficher les actions
+        # Description des actions possibles (exemple, à adapter)
         self.action_descriptions = {
             0: "Aucune action critique",
             1: "Bloquer l'adresse IP source",
             2: "Isoler la machine du réseau",
-            3: "Fermer le port suspect",
-            4: "Augmenter la surveillance (IDS / logs)",
+            3: "Fermer le port/protocole suspect",
+            4: "Augmenter la surveillance (IDS / SIEM / logs)",
             5: "Scanner la machine (antivirus / EDR)",
         }
 
@@ -37,14 +37,16 @@ class SVDSecurityRecommender:
         df doit contenir les colonnes :
         - machine_id
         - action_id
-        - score   (pertinence / efficacité / gravité)
+        - score
         """
-        if not {"machine_id", "action_id", "score"}.issubset(df.columns):
+        required = {"machine_id", "action_id", "score"}
+        if not required.issubset(df.columns):
             raise ValueError(
-                "Le DataFrame doit contenir les colonnes: machine_id, action_id, score."
+                f"Le fichier CSV doit contenir au moins les colonnes : {required}. "
+                f"Colonnes trouvées : {list(df.columns)}"
             )
 
-        # On pivot en matrice machines x actions
+        # pivot -> matrice machines x actions
         pivot = df.pivot_table(
             index="machine_id",
             columns="action_id",
@@ -57,15 +59,13 @@ class SVDSecurityRecommender:
         self.action_ids = list(pivot.columns)
 
         R = pivot.values.astype(float)
-
-        # Moyenne globale sur les valeurs non nulles
         non_zero = R[R > 0]
         if non_zero.size == 0:
             self.global_mean = 0.0
         else:
             self.global_mean = float(non_zero.mean())
 
-        # On remplace les 0 (absences) par la moyenne globale
+        # remplace les 0 par la moyenne globale
         R_filled = np.where(R == 0, self.global_mean, R)
 
         # SVD tronquée
@@ -101,7 +101,7 @@ class SVDSecurityRecommender:
     def recommend_top_n(self, machine_id, n: int = 5):
         """
         Renvoie les n meilleures actions recommandées pour une machine donnée.
-        Retourne une liste de tuples (action_id, score, description).
+        Retourne une liste (action_id, score, description).
         """
         if machine_id not in self.machine_ids:
             raise ValueError(f"Machine {machine_id} inconnue du modèle.")
@@ -109,11 +109,8 @@ class SVDSecurityRecommender:
         results = []
         for action_id in self.action_ids:
             score = self.predict_score(machine_id, action_id)
-            desc = self.action_descriptions.get(
-                action_id, f"Action {action_id}"
-            )
+            desc = self.action_descriptions.get(action_id, f"Action {action_id}")
             results.append((action_id, score, desc))
 
-        # Tri par score décroissant
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:n]
